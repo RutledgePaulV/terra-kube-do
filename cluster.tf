@@ -61,7 +61,7 @@ resource "etcd_discovery" "etcd_cluster_token" {
 }
 
 resource "template_file" "cloud_config" {
-    template = "${file("./cloud-config/etcd_init.yaml")}"
+    template = "${file("./common/cloud-config/etcd_init.yaml")}"
 
     vars {
       discovery_token = "${etcd_discovery.etcd_cluster_token.url}"
@@ -77,7 +77,7 @@ resource "template_file" "flannel_opts_master" {
     template = "${file("./common/systemd/flannel-opts.env")}"
     vars {
       advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
-      etcd_endpoints = "${join(",", format("http://%v:2379", digitalocean_droplet.*.ipv4_address_private))}"
+      etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
     }
 }
 
@@ -86,20 +86,26 @@ resource "template_file" "flannel_opts_minion" {
     template = "${file("./common/systemd/flannel-opts.env")}"
     vars {
       advertise_ip = "${element(digitalocean_droplet.minion.*.ipv4_address, count.index)}"
-      etcd_endpoints = "${join(",", format("http://%v:2379", digitalocean_droplet.*.ipv4_address_private))}"
+      etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
     }
 }
 
 
 
-
+resource "template_file" "master_kubelet" {
+    template = "${file("./master/systemd/kubelet.service")}"
+    vars {
+      advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
+      dns_service_ip = "${var.dns_service_ip}"
+    }
+}
 
 resource "template_file" "master_apiserver" {
       template = "${file("./master/manifests/kube-apiserver.yaml")}"
       vars {
         k8s_version = "${var.k8s_version}"
         advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
-        etcd_endpoints = "${join(",", format("http://%v:2379", digitalocean_droplet.*.ipv4_address_private))}"
+        etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
         service_ip_range = "${var.service_ip_range}"
       }
 }
@@ -115,7 +121,7 @@ resource "template_file" "master_podmaster" {
   template = "${file("./master/manifests/kube-podmaster.yaml")}"
   vars {
     advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
-    etcd_endpoints = "${join(",", format("http://%v:2379", digitalocean_droplet.*.ipv4_address_private))}"
+    etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
   }
 }
 
@@ -135,6 +141,31 @@ resource "template_file" "master_scheduler" {
 
 
 
+resource "template_file" "minion_kubelet" {
+    count = "${var.minion_count}"
+    template = "${file("./minions/systemd/kubelet.service")}"
+    vars {
+      master_ip = "${digitalocean_droplet.master.ipv4_address}"
+      advertise_ip = "${element(digitalocean_droplet.minion.*.ipv4_address, count.index)}"
+      dns_service_ip = "${var.dns_service_ip}"
+    }
+}
+
+resource "template_file" "minion_proxy" {
+  template = "${file("./minions/manifests/kube-proxy.yaml")}"
+  vars {
+    k8s_version = "${var.k8s_version}"
+    master_ip = "${digitalocean_droplet.master.ipv4_address}"
+  }
+}
+
+resource "template_file" "worker-kubeconfig" {
+  template = "${file("./minions/manifests/worker-kubeconfig.yaml")}"
+  vars {}
+}
+
+
+
 resource "template_file" "tls_config_file" {
     template = "${file("./tls/openssl.conf")}"
 
@@ -150,24 +181,11 @@ resource "null_resource" "keys" {
     }
 
     provisioner "local-exec" {
-        inline = [
-          "mkdir keys",
-          "openssl genrsa -out ./keys/ca-key.pem 2048",
-          "openssl req -x509 -new -nodes -key ./keys/ca-key.pem -days 10000 -out ./keys/ca.pem -subj /CN=kube-ca",
+        command = "mkdir ./keys && echo ${template_file.tls_config_file.rendered} > ./keys/openssl.conf"
+    }
 
-          "openssl genrsa -out ./keys/apiserver-key.pem 2048",
-          "echo ${template_file.tls_config_file.rendered} > ./keys/openssl.conf",
-          "openssl req -new -key ./keys/apiserver-key.pem -out apiserver.csr -subj /CN=kube-apiserver -config ./keys/openssl.conf",
-          "openssl x509 -req -in ./keys/apiserver.csr -CA ./keys/ca.pem -CAkey ./keys/ca-key.pem -CAcreateserial -out ./keys/apiserver.pem -days 365 -extensions v3_req -extfile ./keys/openssl.conf",
-
-          "openssl genrsa -out ./keys/worker-key.pem 2048",
-          "openssl req -new -key ./keys/worker-key.pem -out ./keys/worker.csr -subj /CN=kube-worker",
-          "openssl x509 -req -in ./keys/worker.csr -CA ./keys/ca.pem -CAkey ./keys/ca-key.pem -CAcreateserial -out ./keys/worker.pem -days 365",
-
-          "openssl genrsa -out ./keys/admin-key.pem 2048",
-          "openssl req -new -key ./keys/admin-key.pem -out ./keys/admin.csr -subj /CN=kube-admin",
-          "openssl x509 -req -in ./keys/admin.csr -CA ./keys/ca.pem -CAkey ./keys/ca-key.pem -CAcreateserial -out ./keys/admin.pem -days 365"
-        ]
+    provisioner "local-exec" {
+      command = "sh ./keys.sh"
     }
 }
 
