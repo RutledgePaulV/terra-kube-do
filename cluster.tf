@@ -44,6 +44,18 @@ variable "k8s_version" {
   default = "v1.1.2"
 }
 
+variable "cluster_name" {
+  default = "kube-cluster"
+}
+
+variable "cluster_user" {
+  default = "kube-user"
+}
+
+variable "context_name" {
+  default = "kube-kube"
+}
+
 provider "digitalocean" {
     token = "${var.do_token}"
 }
@@ -175,12 +187,28 @@ resource "template_file" "init_flannel" {
 
 
 resource "template_file" "tls_config_file" {
-    template = "${file("./tls/openssl.conf")}"
+    template = "${file("./local/openssl.conf")}"
     vars {
       k8s_service_ip = "${var.k8s_service_ip}"
       master_public_ip = "${digitalocean_droplet.master.ipv4_address}"
     }
 }
+
+
+resource "template_file" "kubectl_init" {
+    template = "${file("./local/kubectl.sh")}"
+    vars {
+        cluster_name = "${var.cluster_name}"
+        cluster_user = "${var.cluster_user}"
+        context_name = "${var.context_name}"
+        master_ip = "${digitalocean_droplet.master.ipv4_address}"
+        ca_cert = "./keys/ca.pem"
+        admin_cert = "./keys/admin.pem"
+        admin_key = "./keys/admin-key.pem"
+    }
+}
+
+
 
 resource "null_resource" "keys" {
     triggers {
@@ -196,8 +224,21 @@ resource "null_resource" "keys" {
     }
 }
 
-resource "null_resource" "master_provisioning" {
 
+resource "null_resource" "kubectl" {
+
+    triggers {
+        master_id = "${digitalocean_droplet.master.id}"
+    }
+
+    provisioner "local-exec" {
+        command = "echo '${template_file.kubectl_init.rendered}' > ./kubectl.sh && chmod +x ./kubectl.sh"
+    }
+
+}
+
+
+resource "null_resource" "master_provisioning" {
 
       provisioner "file" {
             source = "./keys/"
@@ -250,7 +291,9 @@ resource "null_resource" "master_provisioning" {
             "sudo systemctl start flanneld",
             "sudo systemctl start docker",
             "sudo systemctl start kubelet",
-            "sudo systemctl enable etcd2 flanneld docker kubelet"
+            "sudo systemctl enable etcd2 flanneld docker kubelet",
+            "until $(curl --output /dev/null --silent --head --fail http://127.0.0.1:8080); do sleep 2; done;",
+            "curl -XPOST -d '{\"apiVersion\":\"v1\", \"kind\": \"Namespace\", \"metadata\": {\"name\": \"kube-system\"}}' 'http://127.0.0.1:8080/api/v1/namespaces'"
           ]
           connection = {
             host = "${digitalocean_droplet.master.ipv4_address}"
