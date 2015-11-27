@@ -1,3 +1,4 @@
+#!/bin/bash
 openssl genrsa -out ./keys/ca-key.pem 2048
 openssl req -x509 -new -nodes -key ./keys/ca-key.pem -days 10000 -out ./keys/ca.pem -subj /CN=kube-ca
 openssl genrsa -out ./keys/apiserver-key.pem 2048

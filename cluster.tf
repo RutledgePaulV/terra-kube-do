@@ -77,7 +77,7 @@ resource "template_file" "flannel_opts_master" {
     template = "${file("./common/systemd/flannel-opts.env")}"
     vars {
       advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
-      etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
+      etcd_endpoints = "http://${digitalocean_droplet.master.ipv4_address_private}:2379,${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
     }
 }
 
@@ -86,7 +86,7 @@ resource "template_file" "flannel_opts_minion" {
     template = "${file("./common/systemd/flannel-opts.env")}"
     vars {
       advertise_ip = "${element(digitalocean_droplet.minion.*.ipv4_address, count.index)}"
-      etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
+      etcd_endpoints = "http://${digitalocean_droplet.master.ipv4_address_private}:2379,${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
     }
 }
 
@@ -105,7 +105,7 @@ resource "template_file" "master_apiserver" {
       vars {
         k8s_version = "${var.k8s_version}"
         advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
-        etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
+        etcd_endpoints = "http://${digitalocean_droplet.master.ipv4_address_private}:2379,${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
         service_ip_range = "${var.service_ip_range}"
       }
 }
@@ -121,7 +121,7 @@ resource "template_file" "master_podmaster" {
   template = "${file("./master/manifests/kube-podmaster.yaml")}"
   vars {
     advertise_ip = "${digitalocean_droplet.master.ipv4_address}"
-    etcd_endpoints = "${digitalocean_droplet.master.ipv4_address_private},${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
+    etcd_endpoints = "http://${digitalocean_droplet.master.ipv4_address_private}:2379,${join(",", formatlist("http://%s:2379", digitalocean_droplet.minion.*.ipv4_address_private))}"
   }
 }
 
@@ -159,16 +159,23 @@ resource "template_file" "minion_proxy" {
   }
 }
 
-resource "template_file" "worker-kubeconfig" {
+resource "template_file" "worker_kubeconfig" {
   template = "${file("./minions/manifests/worker-kubeconfig.yaml")}"
   vars {}
 }
 
 
+resource "template_file" "init_flannel" {
+  template = "${file("./init_flannel.sh")}"
+  vars {
+    pod_network_subnet = "${var.pod_network_subnet}"
+    master_private_ip = "${digitalocean_droplet.master.ipv4_address_private}"
+  }
+}
+
 
 resource "template_file" "tls_config_file" {
     template = "${file("./tls/openssl.conf")}"
-
     vars {
       k8s_service_ip = "${var.k8s_service_ip}"
       master_public_ip = "${digitalocean_droplet.master.ipv4_address}"
@@ -181,15 +188,129 @@ resource "null_resource" "keys" {
     }
 
     provisioner "local-exec" {
-        command = "mkdir ./keys && echo ${template_file.tls_config_file.rendered} > ./keys/openssl.conf"
+        command = "mkdir ./keys && '${template_file.tls_config_file.rendered}' > ./keys/openssl.conf "
     }
 
     provisioner "local-exec" {
-      command = "sh ./keys.sh"
+        command = "chmod +x ./keys.sh && ./keys.sh"
     }
 }
 
+resource "null_resource" "master_provisioning" {
 
+
+      provisioner "file" {
+            source = "./keys/"
+            destination = "/etc/kubernetes/ssl/"
+            connection = {
+            host = "${digitalocean_droplet.master.ipv4_address}"
+              user = "core"
+              agent = true
+            }
+        }
+
+      provisioner "remote-exec" {
+        inline = [
+            "cat << EOF > /etc/flannel/options.env",
+            "${template_file.flannel_opts_master.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/kubernetes/manifests/kube-proxy.yaml",
+            "${template_file.master_proxy.rendered}",
+            "EOF",
+
+            "cat << EOF > /srv/kubernetes/manifests/kube-scheduler.yaml",
+            "${template_file.master_scheduler.rendered}",
+            "EOF",
+
+            "cat << EOF > /srv/kubernetes/manifests/kube-controller-manager.yaml",
+            "${template_file.master_controller_manager.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/kubernetes/manifests/kube-podmaster.yaml",
+            "${template_file.master_podmaster.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/kubernetes/manifests/kube-apiserver.yaml",
+            "${template_file.master_apiserver.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/systemd/system/kubelet.service",
+            "${template_file.master_kubelet.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/kubernetes/init_flannel.sh",
+            "${template_file.init_flannel.rendered}",
+            "EOF",
+
+            "sudo chmod +x /etc/kubernetes/init_flannel.sh",
+            "sudo systemctl daemon-reload",
+            "sudo systemctl start etcd2",
+            "sudo /etc/kubernetes/init_flannel.sh",
+            "sudo systemctl start flanneld",
+            "sudo systemctl start docker",
+            "sudo systemctl start kubelet",
+            "sudo systemctl enable etcd2 flanneld docker kubelet"
+          ]
+          connection = {
+            host = "${digitalocean_droplet.master.ipv4_address}"
+            user = "core"
+            agent = true
+          }
+      }
+
+      depends_on=["null_resource.keys"]
+}
+
+resource "null_resource" "minion_provisioning" {
+
+      count = "${var.minion_count}"
+
+      provisioner "file" {
+          source = "./keys/"
+          destination = "/etc/kubernetes/ssl/"
+          connection = {
+            host = "${element(digitalocean_droplet.minion.*.ipv4_address, count.index)}"
+            user = "core"
+            agent = true
+          }
+      }
+
+      provisioner "remote-exec" {
+        inline = [
+            "cat << EOF > /etc/flannel/options.env",
+            "${element(template_file.flannel_opts_minion.rendered, count.index)}",
+            "EOF",
+
+            "cat << EOF > /etc/kubernetes/worker-kubeconfig.yaml",
+            "${template_file.worker_kubeconfig.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/kubernetes/manifests/kube-proxy.yaml",
+            "${template_file.minion_proxy.rendered}",
+            "EOF",
+
+            "cat << EOF > /etc/systemd/system/kubelet.service",
+            "${element(template_file.minion_kubelet.rendered, count.index)}",
+            "EOF",
+
+            "sudo systemctl daemon-reload",
+            "sudo systemctl start etcd2",
+            "sudo /etc/kubernetes/init_flannel.sh",
+            "sudo systemctl start flanneld",
+            "sudo systemctl start docker",
+            "sudo systemctl start kubelet",
+            "sudo systemctl enable etcd2 flanneld docker kubelet"
+          ]
+          connection = {
+            host = "${element(digitalocean_droplet.minion.*.ipv4_address, count.index)}"
+            user = "core"
+            agent = true
+          }
+      }
+
+      depends_on = ["null_resource.master_provisioning", "null_resource.keys"]
+}
 
 
 
@@ -201,7 +322,47 @@ resource "digitalocean_droplet" "master" {
     user_data = "${template_file.cloud_config.rendered}"
     ssh_keys = ["${digitalocean_ssh_key.default.id}"]
     private_networking = true
+
+    provisioner "remote-exec" {
+        inline = [
+            "sudo mkdir -p /etc/systemd/system/",
+            "sudo mkdir -p /etc/kubernetes/ssl",
+            "sudo mkdir -p /etc/kubernetes/manifests",
+            "sudo mkdir -p /etc/flannel",
+            "sudo mkdir -p /srv/kubernetes/manifests",
+            "sudo mkdir -p /etc/systemd/system/docker.service.d",
+            "sudo mkdir -p /etc/systemd/system/flanneld.service.d",
+            "sudo chown -R core:core /etc/kubernetes",
+            "sudo chown -R core:core /etc/systemd/system/",
+            "sudo chown -R core:core /etc/flannel",
+            "sudo chown -R core:core /srv/kubernetes"
+        ]
+        connection = {
+          user = "core"
+          agent = true
+        }
+    }
+
+    provisioner "file" {
+        source = "./common/systemd/flannel-before-docker.conf"
+        destination = "/etc/systemd/system/docker.service.d/40-flannel.conf"
+        connection = {
+          user = "core"
+          agent = true
+        }
+    }
+
+    provisioner "file" {
+        source = "./common/systemd/flannel-runtime.conf"
+        destination = "/etc/systemd/system/flanneld.service.d/40-ExecStartPre-symlink.conf"
+        connection = {
+          user = "core"
+          agent = true
+        }
+    }
 }
+
+
 
 resource "digitalocean_droplet" "minion" {
   count = "${var.minion_count}"
@@ -212,4 +373,43 @@ resource "digitalocean_droplet" "minion" {
   user_data = "${template_file.cloud_config.rendered}"
   ssh_keys = ["${digitalocean_ssh_key.default.id}"]
   private_networking = true
+
+  provisioner "remote-exec" {
+      inline = [
+      "sudo mkdir -p /etc/systemd/system/",
+      "sudo mkdir -p /etc/kubernetes/ssl",
+      "sudo mkdir -p /etc/kubernetes/manifests",
+      "sudo mkdir -p /etc/flannel",
+      "sudo mkdir -p /srv/kubernetes/manifests",
+      "sudo mkdir -p /etc/systemd/system/docker.service.d",
+      "sudo mkdir -p /etc/systemd/system/flanneld.service.d",
+      "sudo chown -R core:core /etc/kubernetes",
+      "sudo chown -R core:core /etc/systemd/system/",
+      "sudo chown -R core:core /etc/flannel",
+      "sudo chown -R core:core /srv/kubernetes"
+      ]
+      connection = {
+        user = "core"
+        agent = true
+      }
+  }
+
+  provisioner "file" {
+      source = "./common/systemd/flannel-before-docker.conf"
+      destination = "/etc/systemd/system/docker.service.d/40-flannel.conf"
+      connection = {
+        user = "core"
+        agent = true
+      }
+  }
+
+  provisioner "file" {
+      source = "./common/systemd/flannel-runtime.conf"
+      destination = "/etc/systemd/system/flanneld.service.d/40-ExecStartPre-symlink.conf"
+      connection = {
+        user = "core"
+        agent = true
+      }
+  }
+
 }
