@@ -1,3 +1,4 @@
 *.tfstate
 keys/
 *.srl
+*.tfstate.*

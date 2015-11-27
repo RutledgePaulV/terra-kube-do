@@ -41,7 +41,7 @@ variable "prefix" {
 }
 
 variable "k8s_version" {
-  default = "1.1.2"
+  default = "v1.1.2"
 }
 
 provider "digitalocean" {
@@ -188,7 +188,7 @@ resource "null_resource" "keys" {
     }
 
     provisioner "local-exec" {
-        command = "mkdir ./keys && '${template_file.tls_config_file.rendered}' > ./keys/openssl.conf "
+        command = "mkdir -p ./keys && echo '${template_file.tls_config_file.rendered}' > ./keys/openssl.conf"
     }
 
     provisioner "local-exec" {
@@ -279,7 +279,7 @@ resource "null_resource" "minion_provisioning" {
       provisioner "remote-exec" {
         inline = [
             "cat << EOF > /etc/flannel/options.env",
-            "${element(template_file.flannel_opts_minion.rendered, count.index)}",
+            "${element(template_file.flannel_opts_minion.*.rendered, count.index)}",
             "EOF",
 
             "cat << EOF > /etc/kubernetes/worker-kubeconfig.yaml",
@@ -291,12 +291,11 @@ resource "null_resource" "minion_provisioning" {
             "EOF",
 
             "cat << EOF > /etc/systemd/system/kubelet.service",
-            "${element(template_file.minion_kubelet.rendered, count.index)}",
+            "${element(template_file.minion_kubelet.*.rendered, count.index)}",
             "EOF",
 
             "sudo systemctl daemon-reload",
             "sudo systemctl start etcd2",
-            "sudo /etc/kubernetes/init_flannel.sh",
             "sudo systemctl start flanneld",
             "sudo systemctl start docker",
             "sudo systemctl start kubelet",
