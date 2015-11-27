@@ -232,7 +232,7 @@ resource "null_resource" "kubectl" {
     }
 
     provisioner "local-exec" {
-        command = "echo '${template_file.kubectl_init.rendered}' > ./kubectl.sh && chmod +x ./kubectl.sh"
+        command = "echo '${template_file.kubectl_init.rendered}' > ./kubectl.sh && chmod +x ./kubectl.sh && ./kubectl.sh"
     }
 
 }
