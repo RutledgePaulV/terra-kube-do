@@ -17,23 +17,21 @@ terraform plan
 # do the necessary things to reach desired state
 terraform apply
 
-# use the auto-generated bash script to configure your local kubcetl client.
-# you might want to move the keys elsewhere first
-./kubectl.sh
+# automatically configures your local kubectl and embeds the certs in the conf
+kubectl get nodes
 ```
 
 
-Larger scale (1 master and 30 minions):
+Larger scale (1 master and 21 minions):
 ```bash
 # determine what needs to happen to reach your desired state
-terraform plan -var 'minion_count=30'
+terraform plan -var 'minion_count=21' -var 'do_token=<token>'
 
 # do the necessary things to reach desired state
-terraform apply -var 'minion_count=30'
+terraform apply -var 'minion_count=21' -var 'do_token=<token>'
 
-# use the auto-generated bash script to configure your local kubcetl client.
-# you might want to move the keys elsewhere first
-./kubectl.sh
+# automatically configures your local kubectl and embeds the certs in the conf
+kubectl get nodes
 ```
 
 
