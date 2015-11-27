@@ -2,4 +2,3 @@
 keys/
 *.srl
 *.tfstate.*
-kubectl.sh
