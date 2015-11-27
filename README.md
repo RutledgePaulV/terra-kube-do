@@ -43,7 +43,7 @@ Variables:
 With terraform you can specify variables when planning and applying.
 Most options are exposed as variables for this kubernetes configuration.
 
-```htc
+```hcl
 variable "do_token" {}
 
 # subnet available for pod IPs
