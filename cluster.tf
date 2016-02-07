@@ -41,7 +41,7 @@ variable "prefix" {
 }
 
 variable "k8s_version" {
-  default = "v1.1.2"
+  default = "v1.1.7"
 }
 
 variable "cluster_name" {
@@ -79,9 +79,6 @@ resource "template_file" "cloud_config" {
       discovery_token = "${etcd_discovery.etcd_cluster_token.url}"
     }
 }
-
-
-
 
 
 
