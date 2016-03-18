@@ -41,7 +41,7 @@ variable "prefix" {
 }
 
 variable "k8s_version" {
-  default = "v1.1.7"
+  default = "v1.2.0"
 }
 
 variable "cluster_name" {

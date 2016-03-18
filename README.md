@@ -1,11 +1,22 @@
+Last updated and tested with kubernetes v1.2.0
+
+---
+
 A terraform project for provisioning and scaling kubernetes clusters at digital ocean.
 You'll be prompted for your digital ocean token when running plan and apply. It will
 use your public key at ~/.ssh/id_rsa.pub when provisioning the nodes.
 
+#### Warning
+This does not produce a secure / production ready cluster. In order to properly
+secure your cluster you must run a secure etcd cluster (which this config does
+not create) and ideally you should be using something like the OpenID integration
+or keystone authentication mechanisms. You should also have mechanisms in place to
+ensure security updates, and lock down unnecessary ports.
 
-Depends on:
+#### Dependencies
 * terraform binaries on your path: http://www.terraform.io/downloads.html
 * terraform add-on provider for etcd: https://github.com/bakins/terraform-provider-etcd
+* kubectl binary on your path (to configure the cluster context)
 
 
 
@@ -96,7 +107,7 @@ variable "prefix" {
 
 # kubernetes version to deploy
 variable "k8s_version" {
-  default = "v1.1.2"
+  default = "v1.2.0"
 }
 
 # name of the cluster to configure for kubectl
