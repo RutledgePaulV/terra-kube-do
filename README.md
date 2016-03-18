@@ -28,8 +28,17 @@ terraform plan
 # do the necessary things to reach desired state
 terraform apply
 
-# automatically configures your local kubectl and embeds the certs in the conf
+# configures your local kubectl and embeds the certs in the conf
+./kubectl.sh
+
+# select the new cluster for kubectl's active context
+kubectl config use-context kube-kube
+
+# prove everything should be working!
 kubectl get nodes
+
+# install any addons
+kubectl create -f dns_addon.yml
 ```
 
 
@@ -40,9 +49,6 @@ terraform plan -var 'minion_count=21' -var 'do_token=<token>'
 
 # do the necessary things to reach desired state
 terraform apply -var 'minion_count=21' -var 'do_token=<token>'
-
-# automatically configures your local kubectl and embeds the certs in the conf
-kubectl get nodes
 ```
 
 
