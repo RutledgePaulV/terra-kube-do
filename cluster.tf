@@ -182,6 +182,12 @@ resource "template_file" "init_flannel" {
   }
 }
 
+resource "template_file" "dns_addon" {
+  template = "${file("./common/addons/dns_addon.yaml")}"
+  vars {
+    dns_service_ip = "${var.dns_service_ip}"
+  }
+}
 
 resource "template_file" "tls_config_file" {
     template = "${file("./local/openssl.conf")}"
@@ -290,7 +296,7 @@ resource "null_resource" "master_provisioning" {
             "sudo systemctl start kubelet",
             "sudo systemctl enable etcd2 flanneld docker kubelet",
             "until $(curl --output /dev/null --silent --head --fail http://127.0.0.1:8080); do sleep 2; done;",
-            "curl -XPOST -d '{\"apiVersion\":\"v1\", \"kind\": \"Namespace\", \"metadata\": {\"name\": \"kube-system\"}}' 'http://127.0.0.1:8080/api/v1/namespaces'"
+            "curl -XPOST -H \"Content-Type: application/json\" -d '{\"apiVersion\":\"v1\", \"kind\": \"Namespace\", \"metadata\": {\"name\": \"kube-system\"}}' 'http://127.0.0.1:8080/api/v1/namespaces'"
           ]
           connection = {
             host = "${digitalocean_droplet.master.ipv4_address}"
